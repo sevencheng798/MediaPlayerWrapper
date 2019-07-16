@@ -3,7 +3,6 @@
 ## Compiler introduction:<br>
 
 If you are the first compiler SDK you need to install some thrid-party dependency libraies such as: openssl-1.1-0h/ffmpeg-4.0 and libao-1.2.0.
-Then endit and correctly set the compiler environment in the am113a-toolchain.cmake. so that the next time you recompile the same types of BOARDS you won't need to set it up again.
 
 Once the setup is complete, you can execute the following commands for compilation.
 
@@ -13,11 +12,11 @@ Once the setup is complete, you can execute the following commands for compilati
 
 ## step2, To clone the Soundai sdk to ${HOME}
 
-	git clone ssh://git@119.3.60.230:1622/hardware/Soundai.git
+	git clone https://github.com/sevencheng798/MediaPlayerWrapper.git
 
 ## setp3, To execute the cmake command in the ${HOME}/build_dir directory.
 
-	### Set third-party dependency install path:
+	Set third-party dependency install path:
 	THIRD_LIBRARY_DIR=${HOME}/work/3rd/_install
 
 	cmake ../MediaPlayerWrapper \
