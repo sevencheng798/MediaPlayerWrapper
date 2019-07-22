@@ -421,6 +421,7 @@ int main(int argc, char *argv[]){
 		
 	int opt;
 	av_log_set_level(AV_LOG_TRACE);
+//	av_log_set_level(AV_LOG_DEBUG);
 	while((opt = getopt(argc, argv, "yhu:r:p:f:")) != -1) {
 	switch (opt) {
 		case 'u':
