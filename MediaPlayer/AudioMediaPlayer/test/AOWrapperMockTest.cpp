@@ -81,12 +81,20 @@ std::size_t MockAttachmentReader::read(
 	ReadStatus* readStatus,
 	std::chrono::milliseconds timeoutMs) {
 	
-	m_iteration=2;
+	m_iteration++;
 	if (m_iteration == m_timeoutIteration) {
         (*readStatus) = AttachmentReader::ReadStatus::OK_WOULDBLOCK;
         return AVERROR(EAGAIN);
     }
 
+	if(m_iteration < 30) {
+	std::cout << "read before" << std::endl;
+	std::this_thread::sleep_for(std::chrono::seconds(1));
+	std::cout << "read after" << std::endl;
+	(*readStatus) = AttachmentReader::ReadStatus::OK_TIMEDOUT;
+	return 0;
+	}
+	
     m_stream->read(reinterpret_cast<char*>(buf), numBytes);
     auto bytesRead = m_stream->gcount();
     if (!bytesRead) {
@@ -99,10 +107,8 @@ std::size_t MockAttachmentReader::read(
         return 0;
     }
 	
-	//(*readStatus) = aisdk::utils::attachment::AttachmentReader::ReadStatus::OK;
-	(*readStatus) = aisdk::utils::attachment::AttachmentReader::ReadStatus::OK_TIMEDOUT;
-	std::cout << "=========>read: " << bytesRead << std::endl;
-    return 0;
+	(*readStatus) = aisdk::utils::attachment::AttachmentReader::ReadStatus::OK;
+    return bytesRead;
 }
 
 /// Mocks the media player observer.
@@ -144,6 +150,7 @@ private:
 class AOWrapperPlayerTest : public Test {
 protected:
 	void SetUp() override {
+		av_log_set_level(AV_LOG_TRACE);
 		/// Create object for the @c AOEngine.
 		m_aoEngine = AOEngine::create();
 		/// Create object for the @c AOWrapper.
@@ -174,7 +181,7 @@ TEST_F(AOWrapperPlayerTest, testCreateNullEngine) {
 	auto player = AOWrapper::create(nullptr);
 	EXPECT_EQ(player, nullptr);
 }
-
+#if 0
 TEST_F(AOWrapperPlayerTest, testFirstReadTimeout) {
 	static const ssize_t firstIteration = 1;
 	auto stream = createStream(RAW_STREAM_FILENAME);
@@ -199,7 +206,7 @@ TEST_F(AOWrapperPlayerTest, testFirstReadTimeout) {
 	EXPECT_TRUE(m_player->play(id));
 	EXPECT_EQ(finishedEvent.wait(std::chrono::seconds(15)), std::cv_status::no_timeout);
 }
-
+#endif
 TEST_F(AOWrapperPlayerTest, testRawStreamFromFiles) {
 	auto stream = createStream(RAW_STREAM_FILENAME);
 	EXPECT_NE(stream, nullptr);
@@ -230,7 +237,7 @@ TEST_F(AOWrapperPlayerTest, testRawStreamFromFiles) {
 	//EXPECT_EQ(finishedEvent.wait(), std::cv_status::no_timeout);
 	EXPECT_NE(finishedEvent.wait(), std::cv_status::no_timeout);
 }
-
+#if 0
 TEST_F(AOWrapperPlayerTest, testMp3StreamFromFile) {
 	auto stream = createStream(MP3_STREAM_FILENAME);
 	EXPECT_NE(stream, nullptr);
@@ -259,7 +266,7 @@ TEST_F(AOWrapperPlayerTest, testUrlStream) {
 	EXPECT_TRUE(m_player->play(id));
 	EXPECT_NE(finishedEvent.wait(), std::cv_status::no_timeout);
 }
-
+#endif
 
 /// The default timeout for an expected event.
 const std::chrono::seconds WaitEvent::DEFAULT_TIMEOUT{30};
