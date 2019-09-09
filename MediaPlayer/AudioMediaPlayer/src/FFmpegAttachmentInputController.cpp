@@ -77,7 +77,7 @@ std::unique_ptr<FFmpegAttachmentInputController> FFmpegAttachmentInputController
             inputFormat =
                 std::shared_ptr<AVInputFormat>(av_find_input_format(inputName.c_str()), AVInputFormatDeleter());
 
-            AISDK_INFO(LX("create").d("name", inputName));
+            AISDK_DEBUG5(LX("create").d("name", inputName));
             if (!inputFormat) {
                 AISDK_ERROR(LX("createFailed")
                                 .d("reason", "formatNotSupported")
@@ -108,14 +108,21 @@ int FFmpegAttachmentInputController::read(uint8_t* buffer, int bufferSize) {
     auto readSize = m_reader->read(buffer, bufferSize, &readStatus, READ_TIMEOUT);
     switch (readStatus) {
         case AttachmentReader::ReadStatus::OK:
+            if(!m_hasProbedVaildData)
+                m_hasProbedVaildData = true;
             return readSize;
         case AttachmentReader::ReadStatus::OK_WOULDBLOCK:
         case AttachmentReader::ReadStatus::OK_TIMEDOUT:
             AISDK_DEBUG3(LX(__func__).d("status", readStatus).d("readSize", readSize));
-            return readSize ? readSize : AVERROR_EOF;
-            //return readSize ? readSize : AVERROR(EAGAIN);
+            if(m_tryCount >= 2) {
+                m_tryCount = 0;
+                return readSize ? readSize : AVERROR_EOF;
+            } else {
+                m_tryCount++;
+                return readSize ? readSize : AVERROR(EAGAIN);
+            }
         case AttachmentReader::ReadStatus::CLOSED:
-            AISDK_DEBUG5(LX(__func__).m("Found EOF"));
+            AISDK_DEBUG3(LX(__func__).m("Found EOF"));
             return AVERROR_EOF;
         case AttachmentReader::ReadStatus::ERROR_BYTES_LESS_THAN_WORD_SIZE:
         case AttachmentReader::ReadStatus::ERROR_INTERNAL:
@@ -139,6 +146,8 @@ FFmpegAttachmentInputController::FFmpegAttachmentInputController(
     std::shared_ptr<AttachmentReader> reader,
     std::shared_ptr<AVInputFormat> inputFormat,
     std::shared_ptr<AVDictionary> inputOptions) :
+        m_tryCount{0},
+        m_hasProbedVaildData{false},
         m_reader{reader},
         m_inputFormat{inputFormat},
         m_inputOptions{inputOptions} {
@@ -150,7 +159,14 @@ int FFmpegAttachmentInputController::feedBuffer(void* userData, uint8_t* buffer,
         AISDK_ERROR(LX("feedAvioBufferFailed").d("reason", "nullInputController"));
         return AVERROR_EXTERNAL;
     }
-    return inputController->read(buffer, bufferSize);
+    int readStatus;
+    do {
+
+        readStatus = inputController->read(buffer, bufferSize);
+
+    }while(readStatus == AVERROR(EAGAIN));
+    AISDK_INFO(LX("feedAvioBuffer").d("reason", "test").d("readStatus", readStatus));
+    return readStatus;
 }
 
 AVFormatContext* FFmpegAttachmentInputController::createNewFormatContext() {
@@ -200,7 +216,6 @@ FFmpegAttachmentInputController::getCurrentFormatContextOpen() {
 	AVDictionary* options = nullptr;
 	av_dict_copy(&options, m_inputOptions.get(), EMPTY_FLAGS);	// Open_input will change the pointer value.
 	auto error = avformat_open_input(&avFormatContext, "", m_inputFormat.get(), &options);
-	AISDK_INFO(LX("avformat_open_input").d("return", error));
 	av_dict_free(&options);
 	if (error != 0) {
 		// The avFormatContext will be freed on failure.
@@ -208,10 +223,13 @@ FFmpegAttachmentInputController::getCurrentFormatContextOpen() {
 			AISDK_DEBUG(LX("getContextdFailed").d("reason", "Data unavailable. Try again."));
 			return std::make_tuple(Result::TRY_AGAIN, nullptr, std::chrono::milliseconds::zero());
 		}
-		// auto errorStr = av_err2str(error);
-		AISDK_ERROR(LX("getContextFailed").d("reason", "openInputFailed"));
+		auto errorStr = av_err2str(error);
+		AISDK_ERROR(LX("getContextFailed").d("reason", "openInputFailed").d("errCode", errorStr));
 		return std::make_tuple(Result::ERROR, nullptr, std::chrono::milliseconds::zero());
-	}
+    } else if(!m_hasProbedVaildData) {
+        AISDK_ERROR(LX("getContextFailed").d("reason", "probeVaildDataTimedout"));
+        return std::make_tuple(Result::ERROR, nullptr, std::chrono::milliseconds::zero());
+    }
 
 	auto ioContext = m_ioContext;
 	return std::make_tuple(Result::OK,

@@ -152,10 +152,19 @@ bool AOWrapper::stopLocked(){
 bool AOWrapper::stop(SourceId id)
 {
 	AISDK_DEBUG2(LX(__func__).d("requestId", id));
-	std::lock_guard<std::mutex> lock{m_operationMutex};
-	if (id == m_sourceId)
-		return stopLocked();
-
+	std::unique_lock<std::mutex> lock{m_operationMutex};
+	if (id == m_sourceId) {
+		if(stopLocked()) {
+			lock.unlock();
+			// Make sure current thread be destroyed.
+			if(m_playerThread.joinable()) {
+				m_playerWaitCondition.notify_one(); //
+				m_playerThread.join();
+			}
+			return true;
+		}
+		return false;
+	}
 	AISDK_ERROR(LX("stopFailed").d("reason", "Invalid Id").d("RequestId", id).d("currentId", m_sourceId));
 		
 	return false;
@@ -241,7 +250,8 @@ int AOWrapper::configureNewRequest(
 		m_decoder->abort();
 #endif		
 	m_decoder.reset();
-	
+
+	AISDK_DEBUG0(LX("newRequest").d("reason", "decoderCreate"));
 	m_decoder = FFmpegDecoder::create(std::move(inputController), m_config);
 
 	m_playerThread = std::thread(&AOWrapper::doPlayAudioLoop, this);
@@ -269,8 +279,27 @@ bool AOWrapper::initialize(){
 	}
 
 	m_device = std::shared_ptr<ao_device>(device, AOOpenLiveDeleter());
-	
+
+	av_log_set_callback(log_callback_report);
+
 	return true;
+}
+
+void AOWrapper::log_callback_report(void *ptr, int level, const char *fmt, va_list vl) {
+	if(level > AV_LOG_WARNING)
+		return;
+	const char *format = "[%s @ %p] ";
+	char av_buf[1024] = {0};
+	int offset = 0;
+	AVClass* avc = ptr ? *(AVClass **) ptr : NULL;
+	if(avc) {
+		offset = sprintf(av_buf, format, avc->item_name(ptr), ptr);
+	}
+
+	vsprintf(av_buf+offset, fmt, vl);
+
+	AISDK_DEBUG(LX(av_buf));
+
 }
 
 void AOWrapper::doShutdown()
@@ -307,6 +336,7 @@ void AOWrapper::doPlayAudioLoop() {
 	while(true) {
 		m_playerWaitCondition.wait(lock, task);
 		if(m_isShuttingDown || m_state == AOPlayerState::FINISHED) {
+			AISDK_DEBUG2(LX("doPlayAudioLoop").d("reason", "updatingPlayerState"));
 			m_state = AOPlayerState::IDLE;
 			break;
 		}
@@ -349,10 +379,13 @@ void AOWrapper::doPlayAudioLocked(std::unique_lock<std::mutex> &lock) {
 	
 	lock.lock();
 	if(unexpected) {
-		m_state = AOWrapper::AOPlayerState::FINISHED;
-		if (m_observer) {
-            m_observer->onPlaybackFinished(m_sourceId);
-        }
+		// we should not call the @c onPlaybackFinished When stop a player.
+		if(m_state != AOWrapper::AOPlayerState::FINISHED) {
+			m_state = AOWrapper::AOPlayerState::FINISHED;
+			if (m_observer) {
+	            m_observer->onPlaybackFinished(m_sourceId);
+	        }
+		}
 	}
 	
 }
